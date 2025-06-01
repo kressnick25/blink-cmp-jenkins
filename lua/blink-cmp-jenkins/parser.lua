@@ -197,4 +197,18 @@ function M:parse()
 	return all_definitions
 end
 
+-- The function call "enclosingCall" that is inside an if statement
+-- ((function_call) @f
+-- (#contains? @f "enclosingCall")
+--  (#has-ancestor? @f if_statement)) 
+--
+-- All methods inside an enclosingCall if_statement
+-- ((function_call function: ((identifier) @method_name (#eq? @method_name "method"))) @m
+-- (#has-ancestor? @m if_statement))
+--
+-- The whole if_statement that contains exactly one "enclosingCall"
+-- (if_statement condition: (parenthesized_expression (function_call function: ((identifier) @m (#eq? @m "enclosingCall"))))) @c
+-- The whole if_statement that contains exactly one or more "enclosingCall"
+-- (if_statement condition: ((parenthesized_expression) @p (#contains? @p "enclosingCall"))) @d
+
 return M
