@@ -29,6 +29,68 @@ function source:enabled()
 	return vim.bo.filetype == "groovy" or vim.bo.filetype == "jenkinsfile"
 end
 
+--- @param method table
+--- @return boolean
+local function is_closure(method)
+	if method["params"] ~= nil then
+		if method["params"]["body"] ~= nil then
+			return true
+		end
+		if method["params"]["closures"] ~= nil then
+			return true
+		end
+	end
+	return false
+end
+
+--- @param method table
+--- @return boolean
+local function has_params(method)
+	if method["params"] ~= nil then
+		for key, val in pairs(method["params"]) do
+			if key ~= "body" then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+--- @param type string
+--- @return string
+local function type_to_string(type)
+    local t = string.lower(type)
+	if type == "java.lang.String" then
+		return "''"
+	elseif string.find(t, "boolean") then
+		return "false"
+	elseif type == "java.util.List" then
+		return "[]"
+	elseif type == "java.util.Map" then
+		return "[:]"
+	elseif type == "java.lang.Integer" then
+		return "0"
+	else
+		return "'"..type.."'"
+	end
+end
+
+--- @param params table
+--- @return string
+local function params_to_string(params)
+	local s = ""
+	for key, val in pairs(params) do
+		if key ~= "body" and key ~= "closure" then
+			s = s .. key .. ": "
+			s = s .. type_to_string(val) .. ", "
+		end
+	end
+	-- trim trailin ", "
+	s = s:sub(1, -3)
+	return s
+end
+
+--
 function source:get_completions(ctx, callback)
 	-- ctx (context) contains the current keyword, cursor position, bufnr, etc.
 
@@ -41,18 +103,31 @@ function source:get_completions(ctx, callback)
 		vim.api.nvim_buf_delete(buf, { unload = true })
 	end
 
+	local start_char_offset = 1
+
 	-- You should never filter items based on the keyword, since blink.cmp will
 	-- do this for you
 	local items = {}
 	for _, def in ipairs(self.parsed_methods) do
 		local name = def["name"]
+
+		local snippet = name
+		if def["namedParams"] ~= nil then
+			snippet = snippet .. "(" .. params_to_string(def["namedParams"]) .. ")"
+		elseif has_params(def) then
+			snippet = snippet .. "(" .. params_to_string(def["params"]) .. ")"
+		end
+
+		if is_closure(def) then
+			snippet = snippet .. " {\n}"
+		end
 		--- @type lsp.CompletionItem
 		local item = {
 			-- Label of the item in the UI
 			label = name,
 			-- (Optional) Item kind, where `Function` and `Method` will receive
 			-- auto brackets automatically
-			kind = require("blink.cmp.types").CompletionItemKind.Function,
+			kind = require("blink.cmp.types").CompletionItemKind.Text,
 
 			-- (Optional) Text to fuzzy match against
 			filterText = name,
@@ -63,22 +138,22 @@ function source:get_completions(ctx, callback)
 			-- Text to be inserted when accepting the item using ONE of:
 			--
 			-- (Recommended) Control the exact range of text that will be replaced
-			-- textEdit = {
-			-- 	newText = "item " .. def["name"],
-			-- 	range = {
-			-- 		-- 0-indexed line and character
-			-- 		start = { line = 0, character = 0 },
-			-- 		["end"] = { line = 0, character = 0 },
-			-- 	},
-			-- },
+			textEdit = {
+				newText = snippet,
+				range = {
+					-- 0-indexed line and character
+					start = { line = ctx.cursor[1] - 1, character = ctx.bounds.start_col - start_char_offset },
+					["end"] = { line = ctx.cursor[1] - 1, character = ctx.cursor[2] },
+				},
+			},
 			-- Or get blink.cmp to guess the range to replace for you. Use this only
 			-- when inserting *exclusively* alphanumeric characters. Any symbols will
 			-- trigger complicated guessing logic in blink.cmp that may not give the
 			-- result you're expecting
 			-- Note that blink.cmp will use `label` when omitting both `insertText` and `textEdit`
-			insertText = name,
+			-- insertText = name,
 			-- May be Snippet or PlainText
-			insertTextFormat = vim.lsp.protocol.InsertTextFormat.PlainText,
+			-- insertTextFormat = vim.lsp.protocol.InsertTextFormat.Snippet,
 
 			-- There are some other fields you may want to explore which are blink.cmp
 			-- specific, such as `score_offset` (blink.cmp.CompletionItem)
@@ -113,6 +188,7 @@ end
 function source:resolve(item, callback)
 	item = vim.deepcopy(item)
 
+    -- TODO better data structure
 	local i = nil
 	for _, def in ipairs(self.parsed_methods) do
 		if def["name"] == item["label"] then
@@ -124,18 +200,7 @@ function source:resolve(item, callback)
 		-- Shown in the documentation window (<C-space> when menu open by default)
 		item.documentation = {
 			kind = "markdown",
-			value = "Type: "..i["type"].."\n"..i["doc"],
-		}
-
-		-- Additional edits to make to the document, such as for auto-imports
-		item.additionalTextEdits = {
-			{
-				newText = "foo",
-				range = {
-					start = { line = 0, character = 0 },
-					["end"] = { line = 0, character = 0 },
-				},
-			},
+			value = i["doc"],
 		}
 	end
 
